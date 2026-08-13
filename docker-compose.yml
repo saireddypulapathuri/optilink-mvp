@@ -1,0 +1,15 @@
+services:
+  optilink:
+    build: .
+    image: optilink:local
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      OPTILINK_TRANSFER_ROOT: /data/optilink-product-transfers
+      OPTILINK_MAX_PAYLOAD_BYTES: "131072"
+    volumes:
+      - optilink-data:/data/optilink-product-transfers
+
+volumes:
+  optilink-data:

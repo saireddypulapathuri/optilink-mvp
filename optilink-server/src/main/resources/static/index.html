@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OptiLink</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>OptiLink</h1>
+      <p id="pageSubtitle">Local optical transfer console</p>
+    </div>
+    <nav class="app-nav" aria-label="App mode">
+      <a id="consoleLink" href="/">Console</a>
+      <a id="sendLink" href="/send">Transmit</a>
+      <a id="receiveLink" href="/receive">Receive</a>
+    </nav>
+    <div class="health" id="health">Starting</div>
+  </header>
+
+  <main class="workspace">
+    <section class="panel composer" aria-labelledby="create-title">
+      <div class="panel-head">
+        <h2 id="create-title">Create</h2>
+        <div class="segments payload-segments" role="tablist" aria-label="Payload type">
+          <button id="textMode" class="segment active" type="button">Text</button>
+          <button id="imageMode" class="segment" type="button">Image</button>
+          <button id="videoMode" class="segment" type="button">Video</button>
+          <button id="fileMode" class="segment" type="button">File</button>
+        </div>
+      </div>
+
+      <form id="textForm" class="stack">
+        <label for="textPayload">Payload</label>
+        <textarea id="textPayload" rows="8" maxlength="65536" placeholder="Message to transfer"></textarea>
+        <label for="textPassphrase">Passphrase</label>
+        <input id="textPassphrase" type="password" autocomplete="new-password" minlength="8">
+        <button class="primary" type="submit">Create Transfer</button>
+      </form>
+
+      <form id="imageForm" class="stack hidden">
+        <label for="imagePayload">Payload</label>
+        <input id="imagePayload" type="file" accept="image/*">
+        <label for="imagePassphrase">Passphrase</label>
+        <input id="imagePassphrase" type="password" autocomplete="new-password" minlength="8">
+        <button class="primary" type="submit">Create Transfer</button>
+      </form>
+
+      <form id="videoForm" class="stack hidden">
+        <label for="videoPayload">Payload</label>
+        <input id="videoPayload" type="file" accept="video/*">
+        <label for="videoPassphrase">Passphrase</label>
+        <input id="videoPassphrase" type="password" autocomplete="new-password" minlength="8">
+        <button class="primary" type="submit">Create Transfer</button>
+      </form>
+
+      <form id="fileForm" class="stack hidden">
+        <label for="filePayload">Payload</label>
+        <input id="filePayload" type="file">
+        <label for="filePassphrase">Passphrase</label>
+        <input id="filePassphrase" type="password" autocomplete="new-password" minlength="8">
+        <button class="primary" type="submit">Create Transfer</button>
+      </form>
+
+      <p class="note" id="createMessage" aria-live="polite"></p>
+    </section>
+
+    <section class="panel receiver" aria-labelledby="receiver-title">
+      <div class="panel-head">
+        <h2 id="receiver-title">Receive</h2>
+        <div class="scan-state" id="scanState">Idle</div>
+      </div>
+
+      <div class="stack">
+        <label for="scanPassphrase">Passphrase</label>
+        <input id="scanPassphrase" type="password" autocomplete="new-password" minlength="8">
+        <div class="actions">
+          <button id="startScan" class="primary" type="button">Start Camera</button>
+          <button id="stopScan" class="secondary" type="button" disabled>Stop</button>
+        </div>
+      </div>
+
+      <div class="camera-shell">
+        <video id="cameraPreview" playsinline muted></video>
+        <canvas id="scanCanvas" class="hidden"></canvas>
+        <div id="cameraEmpty" class="camera-empty">Camera preview</div>
+      </div>
+
+      <div class="scan-metrics">
+        <div><dt>Frames</dt><dd id="scanFrames">0 / 0</dd></div>
+        <div><dt>Invalid</dt><dd id="scanInvalid">0</dd></div>
+        <div><dt>Missing</dt><dd id="scanMissing">-</dd></div>
+      </div>
+
+      <div id="scanRecoveredPreview" class="media-preview-shell hidden"></div>
+      <a id="scanDownload" class="link-button hidden" href="#">Download Payload</a>
+      <pre id="scanOutput" class="output"></pre>
+    </section>
+
+    <section class="panel transfer-list" aria-labelledby="transfers-title">
+      <div class="panel-head">
+        <h2 id="transfers-title">Transfers</h2>
+        <button id="refreshTransfers" class="secondary" type="button">Refresh</button>
+      </div>
+      <div id="transferList" class="list"></div>
+    </section>
+
+    <section class="panel detail" aria-labelledby="detail-title">
+      <div class="panel-head">
+        <h2 id="detail-title">Current Transfer</h2>
+        <a id="manifestLink" class="link-button hidden" href="#">Manifest</a>
+      </div>
+
+      <div id="emptyDetail" class="empty">Select or create a transfer.</div>
+
+      <div id="detailBody" class="hidden">
+        <dl class="metrics">
+          <div><dt>ID</dt><dd id="detailId"></dd></div>
+          <div><dt>Frames</dt><dd id="detailFrames"></dd></div>
+          <div><dt>Bytes</dt><dd id="detailBytes"></dd></div>
+          <div><dt>Status</dt><dd id="detailStatus">Unchecked</dd></div>
+        </dl>
+
+        <div class="actions">
+          <button id="openDisplay" class="primary" type="button">Open Display</button>
+          <button id="inspectTransfer" class="secondary" type="button">Inspect</button>
+        </div>
+
+        <iframe id="displayPreview" title="QR display preview"></iframe>
+
+        <div class="receive">
+          <label for="receivePassphrase">Passphrase</label>
+          <div class="inline">
+            <input id="receivePassphrase" type="password" autocomplete="new-password" minlength="8">
+            <button id="receiveTransfer" class="secondary" type="button">Receive</button>
+          </div>
+        </div>
+
+        <div id="mediaPreview" class="media-preview-shell hidden"></div>
+        <a id="downloadRecovered" class="link-button hidden" href="#">Download Payload</a>
+        <pre id="receiveOutput" class="output"></pre>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

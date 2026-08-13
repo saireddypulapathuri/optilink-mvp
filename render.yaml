@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: optilink
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: OPTILINK_TRANSFER_ROOT
+        value: /data/optilink-product-transfers
+      - key: OPTILINK_MAX_PAYLOAD_BYTES
+        value: "131072"
