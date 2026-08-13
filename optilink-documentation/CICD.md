@@ -24,20 +24,20 @@ public HTTPS app URL
 ## Workflow Files
 
 - `.github/workflows/ci.yml`: runs tests, packages the Spring Boot server jar, and validates the Docker image build.
-- `.github/workflows/deploy-render.yml`: triggers a Render deploy hook after a successful `main` CI run or by manual dispatch.
+- `.github/workflows/deploy-render.yml`: triggers a Render deploy hook after a successful `main` CI run or by manual dispatch. Until its optional secret is configured, it completes with a notice so the required CI pipeline stays green.
 - `.github/dependabot.yml`: opens weekly update PRs for Maven dependencies and GitHub Actions.
 - `render.yaml`: Render blueprint for a free Docker web service.
 - `Dockerfile`: multi-stage Docker build used by Render and CI.
 
 ## GitHub Secrets
 
-Add this repository secret after the Render service exists:
+Add this repository secret after the Render service exists when GitHub Actions should explicitly request a deployment:
 
 ```text
 RENDER_DEPLOY_HOOK_URL=<Render deploy hook URL>
 ```
 
-Render can also auto-deploy on every push to `main`. The deploy hook workflow is useful when you want GitHub Actions to be the explicit release gate.
+Render can also auto-deploy on every push to `main` without this secret. The deploy hook workflow is useful when you want GitHub Actions to be the explicit release gate.
 
 ## Render Service Settings
 

@@ -28,8 +28,8 @@ jobs:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
           if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
-            echo "::error::Missing GitHub secret: RENDER_DEPLOY_HOOK_URL"
-            exit 1
+            echo "::notice::RENDER_DEPLOY_HOOK_URL is not configured. Render auto-deploy remains available once the service is connected."
+            exit 0
           fi
 
           curl --fail --show-error --silent --request POST "$RENDER_DEPLOY_HOOK_URL"
