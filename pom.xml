@@ -42,7 +42,7 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <junit.jupiter.version>5.11.4</junit.jupiter.version>
         <mockito.version>5.15.2</mockito.version>
-        <spring.boot.version>3.4.1</spring.boot.version>
+        <spring.boot.version>4.1.0</spring.boot.version>
         <zxing.version>3.5.4</zxing.version>
     </properties>
 
