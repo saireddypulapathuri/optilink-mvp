@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -25,15 +26,38 @@ import org.springframework.web.bind.annotation.RestController;
 public final class TransferController {
     private final ProductTransferService transfers;
     private final ScanSessionService scans;
+    private final TransferRoomService rooms;
 
     /**
      * Creates the transfer controller.
      *
      * @param transfers transfer workflow service
      */
-    public TransferController(ProductTransferService transfers, ScanSessionService scans) {
+    public TransferController(ProductTransferService transfers, ScanSessionService scans, TransferRoomService rooms) {
         this.transfers = transfers;
         this.scans = scans;
+        this.rooms = rooms;
+    }
+
+    /**
+     * Creates an expiring multi-user transfer room.
+     *
+     * @return room state
+     */
+    @PostMapping("/api/rooms")
+    public RoomView createRoom() {
+        return rooms.create();
+    }
+
+    /**
+     * Joins an existing room.
+     *
+     * @param roomCode room code
+     * @return room state
+     */
+    @GetMapping("/api/rooms/{roomCode}")
+    public RoomView getRoom(@PathVariable("roomCode") String roomCode) {
+        return rooms.get(roomCode);
     }
 
     /**
@@ -55,7 +79,20 @@ public final class TransferController {
      * @throws IOException when storage cannot be read
      */
     @GetMapping("/api/transfers")
-    public List<TransferView> listTransfers() throws IOException {
+    public List<TransferView> listTransfers(
+            @RequestHeader(value = "X-OptiLink-Room", required = false) String roomCode) throws IOException {
+        if (roomCode != null && !roomCode.isBlank()) {
+            return rooms.transferIds(roomCode).stream()
+                    .map(transferId -> {
+                        try {
+                            return transfers.getTransfer(transferId);
+                        } catch (IOException exception) {
+                            return null;
+                        }
+                    })
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+        }
         return transfers.listTransfers();
     }
 
@@ -68,9 +105,11 @@ public final class TransferController {
      * @throws GeneralSecurityException when encryption fails
      */
     @PostMapping("/api/transfers/text")
-    public TransferView createText(@RequestBody CreateTextTransferRequest request)
+    public TransferView createText(
+            @RequestBody CreateTextTransferRequest request,
+            @RequestHeader(value = "X-OptiLink-Room", required = false) String roomCode)
             throws IOException, GeneralSecurityException {
-        return transfers.createText(request);
+        return attach(roomCode, transfers.createText(request));
     }
 
     /**
@@ -82,9 +121,11 @@ public final class TransferController {
      * @throws GeneralSecurityException when encryption fails
      */
     @PostMapping("/api/transfers/file")
-    public TransferView createFile(@RequestBody CreateFileTransferRequest request)
+    public TransferView createFile(
+            @RequestBody CreateFileTransferRequest request,
+            @RequestHeader(value = "X-OptiLink-Room", required = false) String roomCode)
             throws IOException, GeneralSecurityException {
-        return transfers.createFile(request);
+        return attach(roomCode, transfers.createFile(request));
     }
 
     /**
@@ -96,9 +137,11 @@ public final class TransferController {
      * @throws GeneralSecurityException when encryption fails
      */
     @PostMapping("/api/transfers/image")
-    public TransferView createImage(@RequestBody CreateFileTransferRequest request)
+    public TransferView createImage(
+            @RequestBody CreateFileTransferRequest request,
+            @RequestHeader(value = "X-OptiLink-Room", required = false) String roomCode)
             throws IOException, GeneralSecurityException {
-        return transfers.createImage(request);
+        return attach(roomCode, transfers.createImage(request));
     }
 
     /**
@@ -110,9 +153,18 @@ public final class TransferController {
      * @throws GeneralSecurityException when encryption fails
      */
     @PostMapping("/api/transfers/video")
-    public TransferView createVideo(@RequestBody CreateFileTransferRequest request)
+    public TransferView createVideo(
+            @RequestBody CreateFileTransferRequest request,
+            @RequestHeader(value = "X-OptiLink-Room", required = false) String roomCode)
             throws IOException, GeneralSecurityException {
-        return transfers.createVideo(request);
+        return attach(roomCode, transfers.createVideo(request));
+    }
+
+    private TransferView attach(String roomCode, TransferView transfer) {
+        if (roomCode != null && !roomCode.isBlank()) {
+            rooms.attach(roomCode, UUID.fromString(transfer.transferId()));
+        }
+        return transfer;
     }
 
     /**
@@ -232,7 +284,7 @@ public final class TransferController {
      * @param exception exception
      * @return error response
      */
-    @ExceptionHandler({IllegalArgumentException.class, GeneralSecurityException.class})
+    @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class, GeneralSecurityException.class})
     public ResponseEntity<ApiError> badRequest(Exception exception) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ApiError(exception.getMessage(), Instant.now()));

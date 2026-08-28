@@ -240,7 +240,8 @@ public final class ProductTransferService {
         char[] secret = requirePassphrase(passphrase);
         UUID transferId = UUID.randomUUID();
         Path directory = createDirectory(transferId);
-        MvpTransferSummary summary = transferService.writeTransfer(directory, transferId, plaintext, secret);
+        MvpTransferSummary summary = transferService.writeProductTransfer(
+                directory, transferId, plaintext, secret, kind, name, contentType);
         writeProductMetadata(directory, kind, name, contentType, plaintext.length);
         return view(transferId, summary.frameCount()).orElseThrow(() -> new NoSuchFileException(transferId.toString()));
     }

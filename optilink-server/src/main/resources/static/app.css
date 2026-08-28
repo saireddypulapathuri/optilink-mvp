@@ -110,6 +110,41 @@ dt {
   border-color: rgba(180, 35, 24, 0.35);
 }
 
+.room-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--line);
+  background: #eef3f6;
+}
+
+.room-identity,
+.room-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.room-identity {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.room-identity strong {
+  color: var(--ink);
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.room-actions input {
+  width: 142px;
+  height: 36px;
+  text-transform: uppercase;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(280px, 360px) minmax(260px, 320px) minmax(420px, 1fr);
@@ -321,6 +356,96 @@ button:disabled {
   font-weight: 800;
 }
 
+.scan-guide {
+  position: absolute;
+  width: min(74%, 360px);
+  aspect-ratio: 1;
+  box-shadow: 0 0 0 999px rgba(6, 11, 15, 0.22);
+  pointer-events: none;
+}
+
+.scan-corner {
+  position: absolute;
+  width: 38px;
+  height: 38px;
+  border-color: #72f2a6;
+  border-style: solid;
+}
+
+.scan-corner.top-left {
+  top: 0;
+  left: 0;
+  border-width: 3px 0 0 3px;
+}
+
+.scan-corner.top-right {
+  top: 0;
+  right: 0;
+  border-width: 3px 3px 0 0;
+}
+
+.scan-corner.bottom-left {
+  bottom: 0;
+  left: 0;
+  border-width: 0 0 3px 3px;
+}
+
+.scan-corner.bottom-right {
+  right: 0;
+  bottom: 0;
+  border-width: 0 3px 3px 0;
+}
+
+.scan-line {
+  position: absolute;
+  right: 8px;
+  left: 8px;
+  height: 2px;
+  background: #72f2a6;
+  box-shadow: 0 0 14px rgba(114, 242, 166, 0.9);
+  animation: scan-sweep 2.2s ease-in-out infinite alternate;
+}
+
+.camera-hint {
+  position: absolute;
+  bottom: 14px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: rgba(8, 14, 18, 0.78);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.scan-progress-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 14px;
+}
+
+.scan-progress-wrap progress {
+  width: 100%;
+  height: 9px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  accent-color: var(--green);
+}
+
+.scan-progress-wrap span {
+  color: var(--green);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: right;
+}
+
+@keyframes scan-sweep {
+  from { top: 10px; }
+  to { top: calc(100% - 12px); }
+}
+
 .scan-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -516,6 +641,33 @@ dd {
     justify-content: center;
   }
 
+  .room-bar,
+  .room-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .room-bar {
+    padding: 10px;
+  }
+
+  .room-identity {
+    justify-content: space-between;
+  }
+
+  .room-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .room-actions input {
+    width: 100%;
+  }
+
+  #copyRoomLink {
+    grid-column: 1 / -1;
+  }
+
   .workspace {
     grid-template-columns: 1fr;
     width: min(100vw - 20px, 680px);
@@ -540,5 +692,75 @@ dd {
   #displayPreview {
     height: 78vw;
     min-height: 280px;
+  }
+
+  .receive-page {
+    background: #080d11;
+  }
+
+  .receive-page .topbar,
+  .receive-page .room-bar {
+    border-color: #273239;
+    background: #10171c;
+    color: #f5f8fa;
+  }
+
+  .receive-page .topbar p,
+  .receive-page .room-identity {
+    color: #aab6bd;
+  }
+
+  .receive-page .room-identity strong {
+    color: #f5f8fa;
+  }
+
+  .receive-page .workspace {
+    width: 100%;
+    margin: 0;
+  }
+
+  .receive-page .receiver {
+    min-height: calc(100dvh - 250px);
+    border: 0;
+    border-radius: 0;
+    background: #080d11;
+    color: #f5f8fa;
+    box-shadow: none;
+  }
+
+  .receive-page .panel-head {
+    border-color: #273239;
+  }
+
+  .receive-page .stack label,
+  .receive-page dt {
+    color: #aab6bd;
+  }
+
+  .receive-page .camera-shell {
+    min-height: min(64dvh, 620px);
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .receive-page #cameraPreview {
+    min-height: min(64dvh, 620px);
+  }
+
+  .receive-page .scan-metrics div {
+    border-color: #273239;
+    background: #10171c;
+  }
+
+  .receive-page .output {
+    border-color: #273239;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-line {
+    top: 50%;
+    animation: none;
   }
 }

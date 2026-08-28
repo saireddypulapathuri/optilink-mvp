@@ -26,6 +26,7 @@ Use the web console to create `Text`, `Image`, `Video`, or `File` transfers, ope
 
 Docker and free Render deployment steps are in [Docker And Free Deployment Guide](optilink-documentation/DOCKER_DEPLOYMENT.md).
 CI/CD setup is in [CI/CD Pipeline](optilink-documentation/CICD.md).
+The multi-user runtime and scaling boundary are in [Production MVP Architecture](optilink-documentation/PRODUCTION_MVP.md).
 The detailed file-by-file handoff and refactoring guide is in [Project Handoff](optilink-documentation/PROJECT_HANDOFF.md).
 The two-device demo script is in [Live Demo Runbook](optilink-documentation/LIVE_DEMO.md).
 
@@ -138,6 +139,7 @@ flowchart LR
 - [Setup And Running Guide](optilink-documentation/SETUP.md)
 - [Live Demo Runbook](optilink-documentation/LIVE_DEMO.md)
 - [CI/CD Pipeline](optilink-documentation/CICD.md)
+- [Production MVP Architecture](optilink-documentation/PRODUCTION_MVP.md)
 - [Docker And Free Deployment Guide](optilink-documentation/DOCKER_DEPLOYMENT.md)
 - [Project Handoff](optilink-documentation/PROJECT_HANDOFF.md)
 - [Practical MVP](optilink-documentation/MVP.md)

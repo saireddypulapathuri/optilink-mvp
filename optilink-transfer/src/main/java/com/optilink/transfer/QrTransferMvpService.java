@@ -7,6 +7,8 @@ import com.optilink.encoder.PacketSymbolEncoder;
 import com.optilink.encoder.QrSymbolRenderer;
 import com.optilink.optical.ErrorCorrectionLevel;
 import com.optilink.optical.OpticalProfile;
+import com.optilink.optical.OpticalSymbol;
+import com.optilink.optical.QrPayloadEnvelope;
 import com.optilink.optical.RenderedOpticalFrame;
 import com.optilink.protocol.BinaryPacketCodec;
 import com.optilink.protocol.OpticalPacket;
@@ -19,10 +21,14 @@ import com.optilink.protocol.TransferChunker;
 import com.optilink.protocol.TransferReassembler;
 import com.optilink.security.PassphraseSealedBox;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -42,6 +48,9 @@ public final class QrTransferMvpService {
     private static final String PNG_MIME_TYPE = "image/png";
     private static final int DISPLAY_FRAME_PERIOD_MILLIS = 650;
     private static final int QR_SAFE_PACKET_PAYLOAD_BYTES = 300;
+    private static final int PRODUCT_PAYLOAD_MAGIC = 0x4f505450;
+    private static final int PRODUCT_PAYLOAD_VERSION = 1;
+    private static final int MAX_METADATA_BYTES = 4_096;
     private static final OpticalProfile PROFILE =
             new OpticalProfile("mvp-qr", 4, 25, ErrorCorrectionLevel.M, 90, QR_SAFE_PACKET_PAYLOAD_BYTES);
 
@@ -83,6 +92,30 @@ public final class QrTransferMvpService {
      */
     public MvpTransferSummary writeTransfer(Path outputDirectory, UUID transferId, byte[] plaintext, char[] passphrase)
             throws IOException, GeneralSecurityException {
+        return writeSealedTransfer(outputDirectory, transferId, plaintext, passphrase);
+    }
+
+    /**
+     * Writes an encrypted QR transfer with portable file metadata.
+     */
+    public MvpTransferSummary writeProductTransfer(
+            Path outputDirectory,
+            UUID transferId,
+            byte[] plaintext,
+            char[] passphrase,
+            String kind,
+            String name,
+            String contentType) throws IOException, GeneralSecurityException {
+        return writeSealedTransfer(
+                outputDirectory,
+                transferId,
+                encodeProductPayload(kind, name, contentType, plaintext),
+                passphrase);
+    }
+
+    private MvpTransferSummary writeSealedTransfer(
+            Path outputDirectory, UUID transferId, byte[] plaintext, char[] passphrase)
+            throws IOException, GeneralSecurityException {
         Objects.requireNonNull(outputDirectory, "outputDirectory");
         byte[] sealedBytes = sealedBox.encode(sealedBox.seal(Objects.requireNonNull(plaintext, "plaintext"), passphrase));
         List<TransferChunk> chunks = chunker.chunk(Objects.requireNonNull(transferId, "transferId"), sealedBytes, maxChunkBytes());
@@ -108,7 +141,7 @@ public final class QrTransferMvpService {
         for (Path framePath : framePaths(inputDirectory)) {
             reassembler.accept(readChunk(framePath));
         }
-        return readTransfer(reassembler, passphrase);
+        return decodeProductPayload(readTransfer(reassembler, passphrase)).bytes();
     }
 
     /**
@@ -123,7 +156,17 @@ public final class QrTransferMvpService {
             throws GeneralSecurityException {
         TransferReassembler reassembler = new TransferReassembler();
         Objects.requireNonNull(chunks, "chunks").forEach(reassembler::accept);
-        return readTransfer(reassembler, passphrase);
+        return decodeProductPayload(readTransfer(reassembler, passphrase)).bytes();
+    }
+
+    /**
+     * Recovers payload bytes and portable metadata from decoded camera chunks.
+     */
+    public RecoveredTransferPayload readTransferPayloadChunks(
+            Collection<TransferChunk> chunks, char[] passphrase) throws GeneralSecurityException {
+        TransferReassembler reassembler = new TransferReassembler();
+        Objects.requireNonNull(chunks, "chunks").forEach(reassembler::accept);
+        return decodeProductPayload(readTransfer(reassembler, passphrase));
     }
 
     /**
@@ -135,6 +178,17 @@ public final class QrTransferMvpService {
      */
     public TransferChunk decodeFrame(byte[] imageBytes) throws IOException {
         return decodeChunk(readFrame(Objects.requireNonNull(imageBytes, "imageBytes")));
+    }
+
+    /**
+     * Decodes OptiLink's text envelope after a browser QR detector has read it from a camera frame.
+     *
+     * @param qrPayload QR text payload
+     * @return decoded transfer chunk
+     */
+    public TransferChunk decodeQrPayload(String qrPayload) {
+        byte[] frameBytes = QrPayloadEnvelope.decode(Objects.requireNonNull(qrPayload, "qrPayload"));
+        return decodeChunk(packetDecoder.decode(new OpticalSymbol(PROFILE, frameBytes)));
     }
 
     /**
@@ -230,7 +284,10 @@ public final class QrTransferMvpService {
     }
 
     private TransferChunk decodeChunk(RenderedOpticalFrame frame) {
-        OpticalPacket packet = packetDecoder.decode(imageDecoder.decode(frame));
+        return decodeChunk(packetDecoder.decode(imageDecoder.decode(frame)));
+    }
+
+    private TransferChunk decodeChunk(OpticalPacket packet) {
         TransferChunk chunk = chunkCodec.decode(packet.payload().bytes());
         verifyPacketMatchesChunk(packet, chunk);
         return chunk;
@@ -277,6 +334,61 @@ public final class QrTransferMvpService {
             throws GeneralSecurityException {
         verifyComplete(reassembler);
         return sealedBox.open(sealedBox.decode(reassembler.assemble()), passphrase);
+    }
+
+    private byte[] encodeProductPayload(String kind, String name, String contentType, byte[] bytes) throws IOException {
+        Objects.requireNonNull(bytes, "bytes");
+        try (var output = new ByteArrayOutputStream(); var data = new DataOutputStream(output)) {
+            data.writeInt(PRODUCT_PAYLOAD_MAGIC);
+            data.writeByte(PRODUCT_PAYLOAD_VERSION);
+            writeMetadata(data, kind);
+            writeMetadata(data, name);
+            writeMetadata(data, contentType);
+            data.writeInt(bytes.length);
+            data.write(bytes);
+            return output.toByteArray();
+        }
+    }
+
+    private void writeMetadata(DataOutputStream output, String value) throws IOException {
+        byte[] bytes = Objects.requireNonNull(value, "metadata").getBytes(StandardCharsets.UTF_8);
+        if (bytes.length == 0 || bytes.length > MAX_METADATA_BYTES) {
+            throw new IllegalArgumentException("payload metadata length is invalid");
+        }
+        output.writeShort(bytes.length);
+        output.write(bytes);
+    }
+
+    private RecoveredTransferPayload decodeProductPayload(byte[] encoded) {
+        if (encoded.length < Integer.BYTES + 1
+                || java.nio.ByteBuffer.wrap(encoded).getInt() != PRODUCT_PAYLOAD_MAGIC) {
+            return new RecoveredTransferPayload("file", "scanned-payload.bin", "application/octet-stream", encoded);
+        }
+        try (var input = new DataInputStream(new ByteArrayInputStream(encoded))) {
+            input.readInt();
+            int version = input.readUnsignedByte();
+            if (version != PRODUCT_PAYLOAD_VERSION) {
+                throw new PacketIntegrityException("unsupported product payload version: " + version);
+            }
+            String kind = readMetadata(input);
+            String name = readMetadata(input);
+            String contentType = readMetadata(input);
+            int payloadLength = input.readInt();
+            if (payloadLength < 0 || payloadLength != input.available()) {
+                throw new PacketIntegrityException("product payload length mismatch");
+            }
+            return new RecoveredTransferPayload(kind, name, contentType, input.readNBytes(payloadLength));
+        } catch (IOException exception) {
+            throw new PacketIntegrityException("invalid product payload envelope", exception);
+        }
+    }
+
+    private String readMetadata(DataInputStream input) throws IOException {
+        int length = input.readUnsignedShort();
+        if (length < 1 || length > MAX_METADATA_BYTES || length > input.available()) {
+            throw new PacketIntegrityException("product payload metadata length is invalid");
+        }
+        return new String(input.readNBytes(length), StandardCharsets.UTF_8);
     }
 
     private List<Integer> oneBased(List<Integer> zeroBasedIndexes) {

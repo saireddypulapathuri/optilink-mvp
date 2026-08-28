@@ -13,6 +13,7 @@ This module contains cross-cutting engineering records for OptiLink. Module-loca
 - [Practical MVP](MVP.md)
 - [Live Demo Runbook](LIVE_DEMO.md)
 - [CI/CD Pipeline](CICD.md)
+- [Production MVP Architecture](PRODUCTION_MVP.md)
 - [Docker And Free Deployment Guide](DOCKER_DEPLOYMENT.md)
 - [Project Handoff](PROJECT_HANDOFF.md)
 - [Roadmap](ROADMAP.md)

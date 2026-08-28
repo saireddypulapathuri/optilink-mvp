@@ -1,12 +1,15 @@
 const state = {
   transfers: [],
   selected: null,
+  room: null,
   scan: {
     session: null,
     stream: null,
     active: false,
     busy: false,
-    timer: null
+    timer: null,
+    detector: null,
+    submittedPayloads: new Set()
   }
 };
 
@@ -16,6 +19,12 @@ const els = {
   consoleLink: document.getElementById("consoleLink"),
   sendLink: document.getElementById("sendLink"),
   receiveLink: document.getElementById("receiveLink"),
+  roomCode: document.getElementById("roomCode"),
+  roomStatus: document.getElementById("roomStatus"),
+  roomInput: document.getElementById("roomInput"),
+  joinRoom: document.getElementById("joinRoom"),
+  newRoom: document.getElementById("newRoom"),
+  copyRoomLink: document.getElementById("copyRoomLink"),
   textMode: document.getElementById("textMode"),
   imageMode: document.getElementById("imageMode"),
   videoMode: document.getElementById("videoMode"),
@@ -39,6 +48,8 @@ const els = {
   scanState: document.getElementById("scanState"),
   cameraPreview: document.getElementById("cameraPreview"),
   scanCanvas: document.getElementById("scanCanvas"),
+  scanProgress: document.getElementById("scanProgress"),
+  scanPercent: document.getElementById("scanPercent"),
   cameraEmpty: document.getElementById("cameraEmpty"),
   scanFrames: document.getElementById("scanFrames"),
   scanInvalid: document.getElementById("scanInvalid"),
@@ -92,12 +103,14 @@ function applyRouteMode() {
 }
 
 async function request(path, options = {}) {
+  const {roomHeader = true, ...fetchOptions} = options;
   const response = await fetch(path, {
     headers: {
       "Content-Type": "application/json",
-      ...(options.headers || {})
+      ...(roomHeader && state.room ? {"X-OptiLink-Room": state.room.code} : {}),
+      ...(fetchOptions.headers || {})
     },
-    ...options
+    ...fetchOptions
   });
   const text = await response.text();
   const body = text ? JSON.parse(text) : null;
@@ -105,6 +118,82 @@ async function request(path, options = {}) {
     throw new Error(body?.message || `Request failed: ${response.status}`);
   }
   return body;
+}
+
+async function initializeRoom() {
+  const queryRoom = new URLSearchParams(window.location.search).get("room");
+  const storedRoom = window.sessionStorage.getItem("optilink.room");
+  const candidate = (queryRoom || storedRoom || "").trim().toUpperCase();
+  if (candidate) {
+    try {
+      await joinTransferRoom(candidate, false);
+      return;
+    } catch (error) {
+      window.sessionStorage.removeItem("optilink.room");
+      els.roomStatus.textContent = error.message;
+    }
+  }
+  if (!document.body.classList.contains("receive-page")) {
+    await createTransferRoom();
+  }
+}
+
+async function createTransferRoom() {
+  setRoomBusy(true);
+  try {
+    const room = await request("/api/rooms", {method: "POST", roomHeader: false});
+    setRoom(room);
+    await loadTransfers();
+  } finally {
+    setRoomBusy(false);
+  }
+}
+
+async function joinTransferRoom(code = els.roomInput.value, reload = true) {
+  const normalized = code.trim().toUpperCase();
+  if (normalized.length !== 8) {
+    throw new Error("Enter the eight-character room code.");
+  }
+  setRoomBusy(true);
+  try {
+    const room = await request(`/api/rooms/${encodeURIComponent(normalized)}`, {roomHeader: false});
+    setRoom(room);
+    if (reload) {
+      await loadTransfers();
+    }
+  } finally {
+    setRoomBusy(false);
+  }
+}
+
+function setRoom(room) {
+  state.room = room;
+  window.sessionStorage.setItem("optilink.room", room.code);
+  els.roomCode.textContent = room.code;
+  els.roomInput.value = room.code;
+  els.roomStatus.textContent = `Active until ${new Date(room.expiresAt).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})}`;
+  els.copyRoomLink.disabled = false;
+  const roomQuery = `?room=${encodeURIComponent(room.code)}`;
+  els.sendLink.href = `/send${roomQuery}`;
+  els.receiveLink.href = `/receive${roomQuery}`;
+}
+
+function setRoomBusy(busy) {
+  els.joinRoom.disabled = busy;
+  els.newRoom.disabled = busy;
+}
+
+async function copyReceiverLink() {
+  if (!state.room) {
+    return;
+  }
+  const url = new URL(state.room.receiveUrl, window.location.origin).href;
+  try {
+    await navigator.clipboard.writeText(url);
+    els.roomStatus.textContent = "Receiver link copied.";
+  } catch (_) {
+    window.prompt("Receiver link", url);
+  }
 }
 
 async function checkHealth() {
@@ -186,6 +275,9 @@ async function createText(event) {
   event.preventDefault();
   els.createMessage.textContent = "Creating transfer...";
   try {
+    if (!state.room) {
+      await createTransferRoom();
+    }
     const transfer = await request("/api/transfers/text", {
       method: "POST",
       body: JSON.stringify({
@@ -215,6 +307,9 @@ async function createBinary(event, mode) {
   }
   els.createMessage.textContent = "Creating transfer...";
   try {
+    if (!state.room) {
+      await createTransferRoom();
+    }
     const contentBase64 = await fileToBase64(file);
     const transfer = await request(`/api/transfers/${mode}`, {
       method: "POST",
@@ -371,6 +466,8 @@ async function startScan() {
       body: JSON.stringify({passphrase: els.scanPassphrase.value})
     });
     state.scan.session = session;
+    state.scan.detector = createBarcodeDetector();
+    state.scan.submittedPayloads = new Set();
     renderScan(session);
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -388,17 +485,36 @@ async function startScan() {
     els.startScan.disabled = true;
     els.stopScan.disabled = false;
     els.scanState.textContent = "Scanning";
-    state.scan.timer = window.setInterval(captureScanFrame, 520);
+    els.scanOutput.textContent = "Looking for an OptiLink QR frame...";
+    state.scan.timer = window.setInterval(captureScanFrame, 320);
   } catch (error) {
     stopScan(false);
     els.scanState.textContent = "Error";
-    els.scanOutput.textContent = error.message;
+    els.scanOutput.textContent = cameraErrorMessage(error);
   }
+}
+
+function cameraErrorMessage(error) {
+  if (!window.isSecureContext) {
+    return "Camera access requires HTTPS. Open the hosted receiver URL directly.";
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return "This browser does not provide camera access. Use current Safari or Chrome.";
+  }
+  if (error?.name === "NotAllowedError") {
+    return "Camera permission is blocked. Allow camera access for this site, then tap Start Camera again.";
+  }
+  if (error?.name === "NotFoundError") {
+    return "No usable camera was found on this device.";
+  }
+  return error.message || "Unable to start the camera.";
 }
 
 function stopScan(updateText = true) {
   state.scan.active = false;
   state.scan.busy = false;
+  state.scan.detector = null;
+  state.scan.submittedPayloads = new Set();
   if (state.scan.timer) {
     window.clearInterval(state.scan.timer);
     state.scan.timer = null;
@@ -425,23 +541,31 @@ async function captureScanFrame() {
   }
   state.scan.busy = true;
   try {
-    const canvas = els.scanCanvas;
-    const video = els.cameraPreview;
-    const width = video.videoWidth;
-    const height = video.videoHeight;
-    if (!width || !height) {
+    const context = drawCameraSquare();
+    if (!context) {
       return;
     }
-    canvas.width = width;
-    canvas.height = height;
-    canvas.getContext("2d").drawImage(video, 0, 0, width, height);
-    const imageBase64 = canvas.toDataURL("image/png");
+    const qrPayload = await detectQrPayload(context);
+    if (qrPayload && state.scan.submittedPayloads.has(qrPayload)) {
+      return;
+    }
+    const payload = qrPayload
+      ? {qrPayload}
+      : {imageBase64: els.scanCanvas.toDataURL("image/jpeg", 0.9)};
     const session = await request(`/api/scans/${state.scan.session.sessionId}/frames`, {
       method: "POST",
-      body: JSON.stringify({imageBase64})
+      body: JSON.stringify(payload)
     });
+    if (qrPayload) {
+      state.scan.submittedPayloads.add(qrPayload);
+    }
     state.scan.session = session;
     renderScan(session);
+    if (!session.complete) {
+      els.scanOutput.textContent = qrPayload
+        ? `Received ${session.acceptedFrames} of ${session.expectedFrames || "?"} QR frames.`
+        : "Looking for an OptiLink QR frame...";
+    }
     if (session.complete) {
       stopScan(false);
       await receiveScan();
@@ -451,6 +575,55 @@ async function captureScanFrame() {
   } finally {
     state.scan.busy = false;
   }
+}
+
+function createBarcodeDetector() {
+  if (!("BarcodeDetector" in window)) {
+    return null;
+  }
+  try {
+    return new window.BarcodeDetector({formats: ["qr_code"]});
+  } catch (_) {
+    return null;
+  }
+}
+
+function drawCameraSquare() {
+  const video = els.cameraPreview;
+  const sourceWidth = video.videoWidth;
+  const sourceHeight = video.videoHeight;
+  if (!sourceWidth || !sourceHeight) {
+    return null;
+  }
+  const sourceSize = Math.min(sourceWidth, sourceHeight);
+  const targetSize = Math.min(960, sourceSize);
+  const sourceX = Math.floor((sourceWidth - sourceSize) / 2);
+  const sourceY = Math.floor((sourceHeight - sourceSize) / 2);
+  const canvas = els.scanCanvas;
+  canvas.width = targetSize;
+  canvas.height = targetSize;
+  const context = canvas.getContext("2d", {willReadFrequently: true});
+  context.drawImage(video, sourceX, sourceY, sourceSize, sourceSize, 0, 0, targetSize, targetSize);
+  return context;
+}
+
+async function detectQrPayload(context) {
+  if (state.scan.detector) {
+    const codes = await state.scan.detector.detect(els.scanCanvas);
+    const value = codes.find(code => code.rawValue?.startsWith("OPTL1:"))?.rawValue;
+    if (value) {
+      return value;
+    }
+  }
+  if (typeof window.jsQR !== "function") {
+    return null;
+  }
+  const canvas = els.scanCanvas;
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const result = window.jsQR(imageData.data, canvas.width, canvas.height, {
+    inversionAttempts: "attemptBoth"
+  });
+  return result?.data?.startsWith("OPTL1:") ? result.data : null;
 }
 
 async function receiveScan() {
@@ -464,7 +637,10 @@ async function receiveScan() {
 
 function renderScan(session) {
   const expected = session.expectedFrames || 0;
+  const percentage = expected ? Math.min(100, Math.round((session.acceptedFrames / expected) * 100)) : 0;
   els.scanFrames.textContent = `${session.acceptedFrames} / ${expected}`;
+  els.scanProgress.value = percentage;
+  els.scanPercent.textContent = `${percentage}%`;
   els.scanInvalid.textContent = session.invalidFrames;
   els.scanMissing.textContent = session.missingFrameNumbers?.length
     ? session.missingFrameNumbers.join(", ")
@@ -481,6 +657,8 @@ function clearScanRecovered() {
   els.scanDownload.removeAttribute("href");
   els.scanDownload.removeAttribute("download");
   els.scanOutput.textContent = "";
+  els.scanProgress.value = 0;
+  els.scanPercent.textContent = "0%";
 }
 
 els.textMode.addEventListener("click", () => setMode("text"));
@@ -506,13 +684,35 @@ els.inspectTransfer.addEventListener("click", () => {
 els.receiveTransfer.addEventListener("click", receiveSelected);
 els.startScan.addEventListener("click", startScan);
 els.stopScan.addEventListener("click", () => stopScan());
+els.joinRoom.addEventListener("click", () => {
+  joinTransferRoom().catch(error => {
+    els.roomStatus.textContent = error.message;
+  });
+});
+els.newRoom.addEventListener("click", () => {
+  createTransferRoom().catch(error => {
+    els.roomStatus.textContent = error.message;
+  });
+});
+els.copyRoomLink.addEventListener("click", copyReceiverLink);
+els.roomInput.addEventListener("input", () => {
+  els.roomInput.value = els.roomInput.value.toUpperCase().replace(/[^23456789A-HJ-NP-Z]/g, "");
+});
+els.roomInput.addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    els.joinRoom.click();
+  }
+});
 
 checkHealth();
 applyRouteMode();
-loadTransfers().catch(error => {
-  els.transferList.innerHTML = "";
-  const empty = document.createElement("div");
-  empty.className = "empty";
-  empty.textContent = error.message;
-  els.transferList.append(empty);
-});
+initializeRoom()
+  .then(loadTransfers)
+  .catch(error => {
+    els.transferList.innerHTML = "";
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = error.message;
+    els.transferList.append(empty);
+  });

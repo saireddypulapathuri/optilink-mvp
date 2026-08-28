@@ -1,0 +1,19 @@
+server:
+  shutdown: graceful
+  error:
+    include-message: always
+
+spring:
+  codec:
+    max-in-memory-size: 3MB
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+optilink:
+  rooms:
+    ttl: PT2H
+    max-active: 2000
+  scans:
+    ttl: PT20M
+    max-active: 2000
+    max-encoded-image-characters: 2500000

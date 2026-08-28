@@ -20,6 +20,20 @@
     <div class="health" id="health">Starting</div>
   </header>
 
+  <section class="room-bar" aria-label="Transfer room">
+    <div class="room-identity">
+      <span>Room</span>
+      <strong id="roomCode">Not joined</strong>
+      <span id="roomStatus">Private sessions expire automatically</span>
+    </div>
+    <div class="room-actions">
+      <input id="roomInput" type="text" inputmode="text" maxlength="8" autocomplete="off" placeholder="Room code" aria-label="Room code">
+      <button id="joinRoom" class="secondary" type="button">Join</button>
+      <button id="newRoom" class="secondary" type="button">New Room</button>
+      <button id="copyRoomLink" class="secondary" type="button" disabled>Copy Receiver Link</button>
+    </div>
+  </section>
+
   <main class="workspace">
     <section class="panel composer" aria-labelledby="create-title">
       <div class="panel-head">
@@ -85,7 +99,20 @@
       <div class="camera-shell">
         <video id="cameraPreview" playsinline muted></video>
         <canvas id="scanCanvas" class="hidden"></canvas>
-        <div id="cameraEmpty" class="camera-empty">Camera preview</div>
+        <div class="scan-guide" aria-hidden="true">
+          <span class="scan-corner top-left"></span>
+          <span class="scan-corner top-right"></span>
+          <span class="scan-corner bottom-left"></span>
+          <span class="scan-corner bottom-right"></span>
+          <span class="scan-line"></span>
+        </div>
+        <div class="camera-hint">Keep the moving QR inside the frame</div>
+        <div id="cameraEmpty" class="camera-empty">Tap Start Camera to scan</div>
+      </div>
+
+      <div class="scan-progress-wrap">
+        <progress id="scanProgress" max="100" value="0"></progress>
+        <span id="scanPercent">0%</span>
       </div>
 
       <div class="scan-metrics">
@@ -145,6 +172,7 @@
     </section>
   </main>
 
+  <script src="/webjars/jsqr/1.4.0/dist/jsQR.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

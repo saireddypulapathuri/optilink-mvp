@@ -4,6 +4,7 @@ import com.optilink.protocol.PacketIntegrityException;
 import com.optilink.protocol.TransferChunk;
 import com.optilink.protocol.TransferReassembler;
 import com.optilink.transfer.QrTransferMvpService;
+import com.optilink.transfer.RecoveredTransferPayload;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -11,6 +12,7 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +21,8 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 
 /**
  * In-memory live camera receiver sessions for browser-to-browser QR scanning.
@@ -27,16 +31,40 @@ import org.springframework.stereotype.Service;
 public final class ScanSessionService {
     private final QrTransferMvpService transferService;
     private final Map<UUID, ScanSession> sessions = new ConcurrentHashMap<>();
+    private final Duration sessionTtl;
+    private final int maxSessions;
+    private final int maxEncodedImageCharacters;
 
     /**
      * Creates the scan session service.
      */
-    public ScanSessionService() {
-        this(new QrTransferMvpService());
+    @Autowired
+    public ScanSessionService(
+            @Value("${optilink.scans.ttl:PT20M}") Duration sessionTtl,
+            @Value("${optilink.scans.max-active:2000}") int maxSessions,
+            @Value("${optilink.scans.max-encoded-image-characters:2500000}") int maxEncodedImageCharacters) {
+        this(new QrTransferMvpService(), sessionTtl, maxSessions, maxEncodedImageCharacters);
     }
 
     ScanSessionService(QrTransferMvpService transferService) {
+        this(transferService, Duration.ofMinutes(20), 2_000, 2_500_000);
+    }
+
+    ScanSessionService(
+            QrTransferMvpService transferService,
+            Duration sessionTtl,
+            int maxSessions,
+            int maxEncodedImageCharacters) {
         this.transferService = Objects.requireNonNull(transferService, "transferService");
+        this.sessionTtl = Objects.requireNonNull(sessionTtl, "sessionTtl");
+        if (sessionTtl.isZero() || sessionTtl.isNegative()) {
+            throw new IllegalArgumentException("sessionTtl must be positive");
+        }
+        if (maxSessions < 1 || maxEncodedImageCharacters < 1) {
+            throw new IllegalArgumentException("scan limits must be positive");
+        }
+        this.maxSessions = maxSessions;
+        this.maxEncodedImageCharacters = maxEncodedImageCharacters;
     }
 
     /**
@@ -47,6 +75,10 @@ public final class ScanSessionService {
      */
     public ScanSessionView create(CreateScanSessionRequest request) {
         Objects.requireNonNull(request, "request");
+        removeExpired();
+        if (sessions.size() >= maxSessions) {
+            throw new IllegalStateException("active scan capacity reached");
+        }
         UUID sessionId = UUID.randomUUID();
         ScanSession session = new ScanSession(sessionId, requirePassphrase(request.passphrase()), Instant.now());
         sessions.put(sessionId, session);
@@ -75,7 +107,12 @@ public final class ScanSessionService {
         Objects.requireNonNull(request, "request");
         ScanSession session = existing(sessionId);
         try {
-            TransferChunk chunk = transferService.decodeFrame(decodeImage(request.imageBase64()));
+            if (request.qrPayload() != null && request.qrPayload().length() > 4_096) {
+                throw new IllegalArgumentException("QR payload exceeds scan size limit");
+            }
+            TransferChunk chunk = request.qrPayload() == null || request.qrPayload().isBlank()
+                    ? transferService.decodeFrame(decodeImage(request.imageBase64()))
+                    : transferService.decodeQrPayload(request.qrPayload());
             session.accept(chunk);
         } catch (PacketIntegrityException | IllegalArgumentException exception) {
             session.invalid();
@@ -92,30 +129,47 @@ public final class ScanSessionService {
      */
     public ReceiveTransferResponse receive(UUID sessionId) throws GeneralSecurityException {
         ScanSession session = existing(sessionId);
-        byte[] plaintext = transferService.readTransferChunks(session.chunks(), session.passphrase());
+        RecoveredTransferPayload payload = transferService.readTransferPayloadChunks(
+                session.chunks(), session.passphrase());
+        byte[] plaintext = payload.bytes();
         String text = utf8Text(plaintext).orElse(null);
         String base64 = Base64.getEncoder().encodeToString(plaintext);
-        String name = "scanned-payload.bin";
-        String contentType = text == null ? "application/octet-stream" : "text/plain;charset=utf-8";
+        String contentType = payload.contentType();
         return new ReceiveTransferResponse(
                 session.transferIdText(),
-                "scanned",
-                name,
+                payload.kind(),
+                payload.name(),
                 contentType,
                 plaintext.length,
                 text,
                 base64,
                 "data:" + contentType + ";base64," + base64,
                 text != null,
-                false);
+                contentType.startsWith("image/") || contentType.startsWith("video/"));
+    }
+
+    /**
+     * Returns the number of active receiver sessions.
+     *
+     * @return active scans
+     */
+    public int activeSessionCount() {
+        removeExpired();
+        return sessions.size();
     }
 
     private ScanSession existing(UUID sessionId) {
         ScanSession session = sessions.get(Objects.requireNonNull(sessionId, "sessionId"));
-        if (session == null) {
-            throw new IllegalArgumentException("scan session not found");
+        if (session == null || session.createdAt().plus(sessionTtl).isBefore(Instant.now())) {
+            sessions.remove(sessionId);
+            throw new IllegalArgumentException("scan session not found or expired");
         }
         return session;
+    }
+
+    private void removeExpired() {
+        Instant cutoff = Instant.now().minus(sessionTtl);
+        sessions.entrySet().removeIf(entry -> entry.getValue().createdAt().isBefore(cutoff));
     }
 
     private ScanSessionView view(ScanSession session) {
@@ -135,6 +189,9 @@ public final class ScanSessionService {
     private byte[] decodeImage(String imageBase64) {
         if (imageBase64 == null || imageBase64.isBlank()) {
             throw new IllegalArgumentException("imageBase64 is required");
+        }
+        if (imageBase64.length() > maxEncodedImageCharacters) {
+            throw new IllegalArgumentException("camera frame exceeds scan size limit");
         }
         int comma = imageBase64.indexOf(',');
         String payload = comma >= 0 ? imageBase64.substring(comma + 1) : imageBase64;

@@ -59,11 +59,11 @@ Use the URL printed by LocalTunnel. Replace the sample URLs above if a new tunne
 3. Enter a passphrase with at least 8 characters.
 4. Click `Create Transfer`.
 5. Click `Open Display`.
-6. Open the receiver URL on the phone.
+6. Copy the receiver link or enter the eight-character room code on the phone.
 7. Enter the same passphrase.
 8. Tap `Start Camera` and allow camera access.
-9. Point the phone camera at the laptop QR beam until the receiver reports completion.
-10. Preview or download the recovered payload.
+9. Keep the moving QR inside the green corners until progress reaches 100%.
+10. Preview or download the automatically recovered payload.
 
 ## Phone To Laptop Demo
 
@@ -91,6 +91,8 @@ QR optical transfer is intentionally bandwidth-limited. Larger videos need the f
 
 - Camera does not start: use the HTTPS tunnel or Render URL, not plain HTTP on a phone.
 - Safety page appears: enter the LocalTunnel password.
-- Receiver shows invalid frames: click `Slow` on the QR beam page and move closer.
-- Receiver does not progress: make the QR fill more of the camera preview and avoid glare.
+- Receiver shows invalid frames: click `Slow` on the QR beam page, raise screen brightness, and move closer.
+- Receiver does not progress: keep the QR inside the green corners, avoid glare, and use current Safari or Chrome.
+- Camera is blocked on iPhone: allow camera access for the Render site in Safari settings, then reload `/receive`.
+- Room expired: create a new sender room and open its new receiver link.
 - Payload does not decrypt: check that both devices used the exact same passphrase.

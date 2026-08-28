@@ -55,4 +55,34 @@ class QrTransferMvpServiceTest {
         assertEquals(List.of(2), inspection.missingFrameNumbers());
         assertEquals(0, inspection.invalidFrames());
     }
+
+    @Test
+    void preservesPortableMediaMetadataAcrossOpticalChunks() throws Exception {
+        QrTransferMvpService service = new QrTransferMvpService();
+        byte[] image = {1, 2, 3, 4, 5};
+        char[] passphrase = "correct horse media staple".toCharArray();
+
+        service.writeProductTransfer(
+                temporaryDirectory,
+                java.util.UUID.randomUUID(),
+                image,
+                passphrase,
+                "image",
+                "camera.png",
+                "image/png");
+
+        java.util.ArrayList<com.optilink.protocol.TransferChunk> chunks = new java.util.ArrayList<>();
+        try (var frames = Files.list(temporaryDirectory)) {
+            for (Path frame : frames.filter(path -> path.getFileName().toString().endsWith(".png")).toList()) {
+                chunks.add(service.decodeFrame(Files.readAllBytes(frame)));
+            }
+        }
+
+        RecoveredTransferPayload recovered = service.readTransferPayloadChunks(chunks, passphrase);
+
+        assertEquals("image", recovered.kind());
+        assertEquals("camera.png", recovered.name());
+        assertEquals("image/png", recovered.contentType());
+        assertArrayEquals(image, recovered.bytes());
+    }
 }

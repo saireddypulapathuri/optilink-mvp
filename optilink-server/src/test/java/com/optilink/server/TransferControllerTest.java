@@ -8,6 +8,13 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
+import java.time.Duration;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.BinaryBitmap;
+import com.google.zxing.DecodeHintType;
+import com.google.zxing.MultiFormatReader;
+import com.google.zxing.client.j2se.BufferedImageLuminanceSource;
+import com.google.zxing.common.HybridBinarizer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -25,7 +32,8 @@ class TransferControllerTest {
     void setUp() {
         ProductTransferService service = new ProductTransferService(temporaryDirectory, new QrTransferMvpService());
         ScanSessionService scanService = new ScanSessionService(new QrTransferMvpService());
-        webTestClient = WebTestClient.bindToController(new TransferController(service, scanService)).build();
+        TransferRoomService roomService = new TransferRoomService(java.time.Clock.systemUTC(), Duration.ofHours(2), 100);
+        webTestClient = WebTestClient.bindToController(new TransferController(service, scanService, roomService)).build();
     }
 
     @Test
@@ -90,6 +98,50 @@ class TransferControllerTest {
                 .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_HTML)
                 .expectBody(String.class)
                 .value(body -> assertTrue(body.contains("startScan")));
+    }
+
+    @Test
+    void isolatesConcurrentTransfersByRoom() {
+        RoomView firstRoom = webTestClient.post()
+                .uri("/api/rooms")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(RoomView.class)
+                .returnResult()
+                .getResponseBody();
+        RoomView secondRoom = webTestClient.post()
+                .uri("/api/rooms")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(RoomView.class)
+                .returnResult()
+                .getResponseBody();
+
+        assertNotNull(firstRoom);
+        assertNotNull(secondRoom);
+
+        webTestClient.post()
+                .uri("/api/transfers/text")
+                .header("X-OptiLink-Room", firstRoom.code())
+                .bodyValue(new CreateTextTransferRequest("first room", "correct horse room staple"))
+                .exchange()
+                .expectStatus().isOk();
+
+        webTestClient.get()
+                .uri("/api/transfers")
+                .header("X-OptiLink-Room", firstRoom.code())
+                .exchange()
+                .expectStatus().isOk()
+                .expectBodyList(TransferView.class)
+                .hasSize(1);
+
+        webTestClient.get()
+                .uri("/api/transfers")
+                .header("X-OptiLink-Room", secondRoom.code())
+                .exchange()
+                .expectStatus().isOk()
+                .expectBodyList(TransferView.class)
+                .hasSize(0);
     }
 
     @Test
@@ -254,6 +306,71 @@ class TransferControllerTest {
         assertNotNull(response);
         assertEquals("scan me", response.text());
         assertTrue(response.utf8Text());
+    }
+
+    @Test
+    void scansBrowserDecodedQrPayloadAndReceivesPayload() throws IOException {
+        TransferView transfer = webTestClient.post()
+                .uri("/api/transfers/text")
+                .bodyValue(new CreateTextTransferRequest("phone scan", "correct horse phone staple"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(TransferView.class)
+                .returnResult()
+                .getResponseBody();
+
+        assertNotNull(transfer);
+
+        ScanSessionView scan = webTestClient.post()
+                .uri("/api/scans")
+                .bodyValue(new CreateScanSessionRequest("correct horse phone staple"))
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(ScanSessionView.class)
+                .returnResult()
+                .getResponseBody();
+
+        assertNotNull(scan);
+
+        Path transferDirectory = temporaryDirectory.resolve(transfer.transferId());
+        try (var paths = Files.list(transferDirectory)) {
+            for (Path frame : paths.filter(path -> path.getFileName().toString().endsWith(".png")).toList()) {
+                scan = webTestClient.post()
+                        .uri("/api/scans/" + scan.sessionId() + "/frames")
+                        .bodyValue(new SubmitScanFrameRequest(null, qrPayload(Files.readAllBytes(frame))))
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectBody(ScanSessionView.class)
+                        .returnResult()
+                        .getResponseBody();
+            }
+        }
+
+        assertNotNull(scan);
+        assertTrue(scan.complete());
+        assertEquals(transfer.transferId(), scan.transferId());
+
+        ReceiveTransferResponse response = webTestClient.post()
+                .uri(scan.receiveUrl())
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(ReceiveTransferResponse.class)
+                .returnResult()
+                .getResponseBody();
+
+        assertNotNull(response);
+        assertEquals("phone scan", response.text());
+    }
+
+    private String qrPayload(byte[] imageBytes) throws IOException {
+        var image = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(imageBytes));
+        var bitmap = new BinaryBitmap(new HybridBinarizer(new BufferedImageLuminanceSource(image)));
+        var hints = java.util.Map.of(DecodeHintType.POSSIBLE_FORMATS, java.util.List.of(BarcodeFormat.QR_CODE));
+        try {
+            return new MultiFormatReader().decode(bitmap, hints).getText();
+        } catch (com.google.zxing.NotFoundException exception) {
+            throw new IOException("test QR frame did not decode", exception);
+        }
     }
 
     @Test
