@@ -51,7 +51,7 @@ jobs:
         run: mvn -B -ntp -pl optilink-server -am -DskipTests package
 
       - name: Upload server jar
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: optilink-server-jar
           path: optilink-server/target/optilink-server-*.jar
